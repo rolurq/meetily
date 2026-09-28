@@ -97,7 +97,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   });
   const [selectedSummaryModel, setSelectedSummaryModel] = useState<string>('');
   const [recommendedSummaryModel, setRecommendedSummaryModel] = useState<string>('');
-  const [summaryEnabled, setSummaryEnabled] = useState<boolean>(true);
+  const [summaryEnabled, setSummaryEnabled] = useState<boolean>(false);
   const [databaseExists, setDatabaseExists] = useState(false);
   const [isBackgroundDownloading, setIsBackgroundDownloading] = useState(false);
 

@@ -47,7 +47,7 @@ export function SetupOverviewStep() {
   return (
     <OnboardingContainer
       title="Setup Overview"
-      description="Meetily requires a Transcription model. AI Summaries are optional and can be turned off below."
+      description="Meetily requires a Transcription model. AI Summaries are optional — turn them on below if you'd like one."
       step={2}
       totalSteps={isMac ? 4 : 3}
     >
