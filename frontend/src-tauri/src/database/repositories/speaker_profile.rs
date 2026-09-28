@@ -1,4 +1,4 @@
-use crate::database::models::SpeakerProfile;
+use crate::database::models::{DateTimeUtc, SpeakerProfile};
 use chrono::Utc;
 use sqlx::{Error as SqlxError, SqlitePool};
 use tracing::info;
@@ -78,8 +78,8 @@ impl SpeakerProfilesRepository {
             embedding_model: embedding_model.to_string(),
             sample_count: 1,
             sample_audio_path: sample_audio_path.map(|s| s.to_string()),
-            created_at: now.into(),
-            updated_at: now.into(),
+            created_at: DateTimeUtc(now),
+            updated_at: DateTimeUtc(now),
         })
     }
 
