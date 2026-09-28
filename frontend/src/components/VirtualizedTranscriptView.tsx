@@ -6,9 +6,17 @@ import { useAutoScroll } from "@/hooks/useAutoScroll";
 import { useTranscriptStreaming } from "@/hooks/useTranscriptStreaming";
 import { ConfidenceIndicator } from "./ConfidenceIndicator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { RecordingStatusBar } from "./RecordingStatusBar";
 import { motion, AnimatePresence } from "framer-motion";
 import { TranscriptSegmentData } from "@/types";
+import { User, Check } from "lucide-react";
+
+export interface SpeakerProfileOption {
+  id: string;
+  name: string;
+  is_named: boolean;
+}
 
 export interface VirtualizedTranscriptViewProps {
     /** Transcript segments to display */
@@ -34,6 +42,11 @@ export interface VirtualizedTranscriptViewProps {
     totalCount?: number;
     loadedCount?: number;
     onLoadMore?: () => void;
+
+    /** Known speaker profiles, for showing names on segments and offering reassignment */
+    speakerProfiles?: SpeakerProfileOption[];
+    /** Called when the user picks a different speaker for a segment. Omit to hide speaker UI entirely. */
+    onReassignSegment?: (transcriptId: string, speakerId: string) => void;
 }
 
 // Threshold for enabling virtualization (below this, use simple rendering)
@@ -63,12 +76,74 @@ function cleanStopWords(text: string): string {
     return cleanedText.replace(/\s+/g, ' ').trim();
 }
 
+// Speaker name badge, clickable to reassign this segment to a different known speaker.
+const SpeakerBadge = memo(function SpeakerBadge({
+    transcriptId,
+    speakerId,
+    speakerConfidence,
+    speakerProfiles,
+    onReassignSegment,
+}: {
+    transcriptId: string;
+    speakerId: string;
+    speakerConfidence?: number;
+    speakerProfiles: SpeakerProfileOption[];
+    onReassignSegment: (transcriptId: string, speakerId: string) => void;
+}) {
+    const [open, setOpen] = useState(false);
+    const current = speakerProfiles.find((p) => p.id === speakerId);
+    const label = current?.name ?? 'Unknown speaker';
+
+    return (
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+                <button
+                    className="inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-900 bg-gray-100 hover:bg-gray-200 rounded-full px-2 py-0.5 mb-1 transition-colors"
+                    title={
+                        speakerConfidence !== undefined && speakerConfidence < 1
+                            ? `${label} (${Math.round(speakerConfidence * 100)}% confident) — click to change`
+                            : `${label} — click to change`
+                    }
+                >
+                    <User size={11} />
+                    {label}
+                </button>
+            </PopoverTrigger>
+            <PopoverContent align="start" className="w-56 p-1">
+                {speakerProfiles.length === 0 ? (
+                    <p className="text-xs text-gray-500 p-2">No saved speakers yet.</p>
+                ) : (
+                    <div className="max-h-64 overflow-y-auto">
+                        {speakerProfiles.map((profile) => (
+                            <button
+                                key={profile.id}
+                                className="w-full flex items-center justify-between gap-2 text-sm px-2 py-1.5 rounded hover:bg-gray-100 text-left"
+                                onClick={() => {
+                                    onReassignSegment(transcriptId, profile.id);
+                                    setOpen(false);
+                                }}
+                            >
+                                <span className={profile.is_named ? '' : 'text-gray-500 italic'}>{profile.name}</span>
+                                {profile.id === speakerId && <Check size={14} className="text-blue-600" />}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </PopoverContent>
+        </Popover>
+    );
+});
+
 // Memoized transcript segment component
 const TranscriptSegment = memo(function TranscriptSegment({
     id,
     timestamp,
     text,
     confidence,
+    speakerId,
+    speakerConfidence,
+    speakerProfiles,
+    onReassignSegment,
     isStreaming,
     showConfidence,
 }: {
@@ -76,6 +151,10 @@ const TranscriptSegment = memo(function TranscriptSegment({
     timestamp: number;
     text: string;
     confidence?: number;
+    speakerId?: string;
+    speakerConfidence?: number;
+    speakerProfiles?: SpeakerProfileOption[];
+    onReassignSegment?: (transcriptId: string, speakerId: string) => void;
     isStreaming: boolean;
     showConfidence: boolean;
 }) {
@@ -96,7 +175,18 @@ const TranscriptSegment = memo(function TranscriptSegment({
                         )}
                     </TooltipContent>
                 </Tooltip>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
+                    {speakerId && onReassignSegment && speakerProfiles && (
+                        <div>
+                            <SpeakerBadge
+                                transcriptId={id}
+                                speakerId={speakerId}
+                                speakerConfidence={speakerConfidence}
+                                speakerProfiles={speakerProfiles}
+                                onReassignSegment={onReassignSegment}
+                            />
+                        </div>
+                    )}
                     {isStreaming ? (
                         <div className="bg-gray-100 border border-gray-200 rounded-lg px-3 py-2">
                             <p className="text-base text-gray-800 leading-relaxed">{displayText}</p>
@@ -124,6 +214,8 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
     totalCount = 0,
     loadedCount = 0,
     onLoadMore,
+    speakerProfiles,
+    onReassignSegment,
 }) => {
     // Create scroll ref first - shared between virtualizer and auto-scroll hook
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -294,6 +386,10 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         timestamp={segment.timestamp}
                                         text={getDisplayText(segment)}
                                         confidence={segment.confidence}
+                                        speakerId={segment.speakerId}
+                                        speakerConfidence={segment.speakerConfidence}
+                                        speakerProfiles={speakerProfiles}
+                                        onReassignSegment={onReassignSegment}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                     />
@@ -350,6 +446,10 @@ export const VirtualizedTranscriptView: React.FC<VirtualizedTranscriptViewProps>
                                         timestamp={segment.timestamp}
                                         text={getDisplayText(segment)}
                                         confidence={segment.confidence}
+                                        speakerId={segment.speakerId}
+                                        speakerConfidence={segment.speakerConfidence}
+                                        speakerProfiles={speakerProfiles}
+                                        onReassignSegment={onReassignSegment}
                                         isStreaming={isStreaming}
                                         showConfidence={showConfidence}
                                     />

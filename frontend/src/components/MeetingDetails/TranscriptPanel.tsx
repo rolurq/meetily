@@ -4,7 +4,16 @@ import { Transcript, TranscriptSegmentData } from '@/types';
 import { TranscriptView } from '@/components/TranscriptView';
 import { VirtualizedTranscriptView } from '@/components/VirtualizedTranscriptView';
 import { TranscriptButtonGroup } from './TranscriptButtonGroup';
-import { useMemo } from 'react';
+import { useMemo, useEffect, useState, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { toast } from 'sonner';
+
+interface SpeakerProfile {
+  id: string;
+  name: string;
+  is_named: boolean;
+}
 
 interface TranscriptPanelProps {
   transcripts: Transcript[];
@@ -61,8 +70,67 @@ export function TranscriptPanel({
       endTime: t.audio_end_time,
       text: t.text,
       confidence: t.confidence,
+      speakerId: t.speaker_id,
+      speakerConfidence: t.speaker_confidence,
     }));
   }, [transcripts, usePagination, segments]);
+
+  // Known speaker profiles, for showing names on segments and offering reassignment.
+  const [speakerProfiles, setSpeakerProfiles] = useState<SpeakerProfile[]>([]);
+
+  const loadSpeakerProfiles = useCallback(async () => {
+    try {
+      const profiles = await invoke<SpeakerProfile[]>('diarization_list_speaker_profiles');
+      setSpeakerProfiles(profiles);
+    } catch (error) {
+      console.error('Failed to load speaker profiles:', error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSpeakerProfiles();
+  }, [loadSpeakerProfiles]);
+
+  // Refresh the speaker list and transcript segments whenever diarization runs or a
+  // segment is reassigned for this meeting, so newly detected/renamed speakers show up.
+  useEffect(() => {
+    if (!meetingId) return;
+    let unlistenComplete: (() => void) | undefined;
+    let unlistenUpdated: (() => void) | undefined;
+
+    listen<{ meetingId: string }>('diarization-complete', (event) => {
+      if (event.payload.meetingId !== meetingId) return;
+      loadSpeakerProfiles();
+      onRefetchTranscripts?.();
+    }).then((fn) => (unlistenComplete = fn));
+
+    listen<{ meetingId: string }>('diarization-segment-updated', (event) => {
+      if (event.payload.meetingId !== meetingId) return;
+      loadSpeakerProfiles();
+      onRefetchTranscripts?.();
+    }).then((fn) => (unlistenUpdated = fn));
+
+    return () => {
+      unlistenComplete?.();
+      unlistenUpdated?.();
+    };
+  }, [meetingId, loadSpeakerProfiles, onRefetchTranscripts]);
+
+  const handleReassignSegment = useCallback(async (transcriptId: string, targetSpeakerId: string) => {
+    if (!meetingId) return;
+    try {
+      await invoke('diarization_reassign_segment', {
+        meetingId,
+        transcriptId,
+        targetSpeakerId,
+      });
+      await Promise.all([loadSpeakerProfiles(), onRefetchTranscripts?.()]);
+      toast.success('Speaker updated');
+    } catch (error) {
+      console.error('Failed to reassign speaker:', error);
+      toast.error('Failed to update speaker', { description: String(error) });
+    }
+  }, [meetingId, loadSpeakerProfiles, onRefetchTranscripts]);
 
   return (
     <div className="flex h-full min-w-0 w-full bg-white flex-col relative @container">
@@ -94,6 +162,8 @@ export function TranscriptPanel({
           totalCount={totalCount}
           loadedCount={loadedCount}
           onLoadMore={onLoadMore}
+          speakerProfiles={speakerProfiles}
+          onReassignSegment={meetingId ? handleReassignSegment : undefined}
         />
       </div>
 

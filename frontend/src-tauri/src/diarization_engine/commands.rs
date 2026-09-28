@@ -317,7 +317,8 @@ pub async fn diarization_reassign_segment<R: Runtime>(
 /// the target profile's voiceprint. Used from the post-diarization "name these speakers"
 /// panel when a whole detected speaker was matched to the wrong person.
 #[command]
-pub async fn diarization_reassign_meeting_speaker(
+pub async fn diarization_reassign_meeting_speaker<R: Runtime>(
+    app_handle: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     meeting_id: String,
     from_speaker_id: String,
@@ -366,6 +367,11 @@ pub async fn diarization_reassign_meeting_speaker(
     TranscriptsRepository::reassign_speaker(pool, &meeting_id, &from_speaker_id, &profile.id, 1.0)
         .await
         .map_err(|e| e.to_string())?;
+
+    let _ = app_handle.emit(
+        "diarization-segment-updated",
+        serde_json::json!({ "meetingId": meeting_id, "speakerId": profile.id }),
+    );
 
     Ok(profile.into())
 }
