@@ -1,80 +1,79 @@
-//! NeMo-style log-mel filterbank feature extraction.
+//! Log-mel filterbank feature extraction for the bundled NeMo speaker-embedding models.
 //!
-//! The bundled speaker-embedding models (NeMo TitaNet / SpeakerNet, exported to ONNX)
-//! take a single `audio_signal` input of shape `[batch, 64, time]` — 64 mel channels,
-//! channels-first, matching NeMo's `AudioToMelSpectrogramPreprocessor` defaults:
-//! a centered (reflect-padded) STFT with a Hann window, a Slaney mel scale with
-//! area-normalized filters, and per-feature (per mel-bin) mean/variance normalization.
-//! This is a different convention from Kaldi/WeSpeaker fbank (which uses a Povey
-//! window, non-centered framing, and a different mel scale) — this module intentionally
-//! reproduces NeMo's pipeline, not Kaldi's, so features line up with what these models
-//! were trained on.
+//! Verified against the actual reference implementation these `.onnx` exports ship
+//! with — `k2-fsa/sherpa-onnx`'s `SpeakerEmbeddingExtractorNeMoImpl` (which builds
+//! features via `kaldi-native-fbank`'s `OnlineStream` with `snip_edges=true`,
+//! `is_librosa=true`, `remove_dc_offset=false`) — rather than assumed from NeMo's
+//! Python preprocessor in isolation. Concretely, per `kaldi-native-fbank`:
+//! - Kaldi-style snip-edge framing (frame `f` starts at `f * frame_shift`; no
+//!   centering/reflect-padding of the signal).
+//! - Pre-emphasis applied per frame (using the frame's own first sample as history),
+//!   then a periodic Hann window (`a = 2*pi/N`, not `2*pi/(N-1)`).
+//! - The windowed frame is left-aligned and zero-padded up to the FFT size (400 -> 512).
+//! - A Slaney-scale, area-normalized mel filterbank (librosa's default), 64 bins.
+//! - Power spectrum, natural log with NeMo's `log_zero_guard_value` epsilon.
+//! - Per-feature (per mel-bin) mean/variance normalization across time
+//!   (`NormalizePerFeature` in `speaker-embedding-extractor-nemo-impl.h`).
+//! Output is channels-first (`[mel_bin][frame]`) since the model's `audio_signal`
+//! input is `[batch, 64, time]` (`Transpose12` is applied before the ONNX call in
+//! the reference implementation; we just build it in that layout directly).
 
 use realfft::RealFftPlanner;
 use std::f32::consts::PI;
 
 const SAMPLE_RATE: f32 = 16000.0;
-const N_FFT: usize = 512;
+const N_FFT: usize = 512; // next power of two >= WIN_LENGTH
 const WIN_LENGTH: usize = 400; // 25ms @ 16kHz
 const HOP_LENGTH: usize = 160; // 10ms @ 16kHz
 pub const NUM_MEL_BINS: usize = 64;
 const PREEMPHASIS_COEFF: f32 = 0.97;
 const LOG_ZERO_GUARD: f32 = 5.960_464_5e-8; // 2^-24, matches NeMo's log_zero_guard_value
-const NORMALIZE_EPS: f32 = 1e-5; // matches NeMo's per-feature normalization CONSTANT
+const NORMALIZE_EPS: f32 = 1e-5; // matches NormalizePerFeature's epsilon
 
-/// Slaney-scale Hz -> mel, matching librosa's default (htk=False) and NeMo's mel filterbank.
+/// Slaney-scale Hz -> mel (`MelScaleSlaney` in kaldi-native-fbank's mel-computations.h).
 fn hz_to_mel(hz: f32) -> f32 {
-    const F_SP: f32 = 200.0 / 3.0;
-    const MIN_LOG_HZ: f32 = 1000.0;
-    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP; // 15.0
-    if hz < MIN_LOG_HZ {
-        hz / F_SP
+    if hz <= 1000.0 {
+        hz * 3.0 / 200.0
     } else {
-        let logstep = (6.4f32).ln() / 27.0;
-        MIN_LOG_MEL + (hz / MIN_LOG_HZ).ln() / logstep
+        15.0 + 14.545_078_5 * (hz / 1000.0).ln()
     }
 }
 
-/// Slaney-scale mel -> Hz (inverse of [`hz_to_mel`]).
+/// Slaney-scale mel -> Hz (`InverseMelScaleSlaney`).
 fn mel_to_hz(mel: f32) -> f32 {
-    const F_SP: f32 = 200.0 / 3.0;
-    const MIN_LOG_HZ: f32 = 1000.0;
-    const MIN_LOG_MEL: f32 = MIN_LOG_HZ / F_SP; // 15.0
-    if mel < MIN_LOG_MEL {
-        mel * F_SP
+    if mel <= 15.0 {
+        200.0 / 3.0 * mel
     } else {
-        let logstep = (6.4f32).ln() / 27.0;
-        MIN_LOG_HZ * (logstep * (mel - MIN_LOG_MEL)).exp()
+        1000.0 * ((mel - 15.0) * 0.068_751_78).exp()
     }
 }
 
-/// Builds librosa/NeMo-style mel filters: `num_mel_bins` rows of sparse (fft_bin, weight)
-/// pairs over the `n_fft/2 + 1` power-spectrum bins, with Slaney area normalization.
+/// Builds Slaney-scale, area-normalized mel filters (librosa/`is_librosa=true` convention):
+/// `num_mel_bins` rows of sparse (fft_bin, weight) pairs over the `n_fft/2 + 1` power bins.
 fn build_mel_filterbank(num_mel_bins: usize) -> Vec<Vec<(usize, f32)>> {
     let num_fft_bins = N_FFT / 2 + 1;
-    let fft_bin_freq = |bin: usize| -> f32 { bin as f32 * SAMPLE_RATE / N_FFT as f32 };
+    let fft_bin_width = SAMPLE_RATE / N_FFT as f32;
 
-    // num_mel_bins + 2 edge points, evenly spaced in mel space, converted back to Hz.
-    let mel_min = hz_to_mel(0.0);
-    let mel_max = hz_to_mel(SAMPLE_RATE / 2.0);
-    let mel_points: Vec<f32> = (0..=num_mel_bins + 1)
-        .map(|i| mel_to_hz(mel_min + (mel_max - mel_min) * i as f32 / (num_mel_bins + 1) as f32))
-        .collect();
+    let mel_low = hz_to_mel(0.0);
+    let mel_high = hz_to_mel(SAMPLE_RATE / 2.0);
+    let mel_delta = (mel_high - mel_low) / (num_mel_bins as f32 + 1.0);
 
     let mut filters = Vec::with_capacity(num_mel_bins);
     for m in 0..num_mel_bins {
-        let (left, center, right) = (mel_points[m], mel_points[m + 1], mel_points[m + 2]);
-        let lower_diff = center - left;
-        let upper_diff = right - center;
-        let slaney_norm = 2.0 / (right - left);
+        let left_hz = mel_to_hz(mel_low + m as f32 * mel_delta);
+        let center_hz = mel_to_hz(mel_low + (m as f32 + 1.0) * mel_delta);
+        let right_hz = mel_to_hz(mel_low + (m as f32 + 2.0) * mel_delta);
+        let slaney_norm = 2.0 / (right_hz - left_hz);
 
         let mut weights = Vec::new();
         for bin in 0..num_fft_bins {
-            let f = fft_bin_freq(bin);
-            let lower = (f - left) / lower_diff;
-            let upper = (right - f) / upper_diff;
-            let weight = lower.min(upper).max(0.0) * slaney_norm;
-            if weight > 0.0 {
+            let hz = fft_bin_width * bin as f32;
+            if hz > left_hz && hz < right_hz {
+                let weight = if hz <= center_hz {
+                    (hz - left_hz) / (center_hz - left_hz)
+                } else {
+                    (right_hz - hz) / (right_hz - center_hz)
+                } * slaney_norm;
                 weights.push((bin, weight));
             }
         }
@@ -83,56 +82,25 @@ fn build_mel_filterbank(num_mel_bins: usize) -> Vec<Vec<(usize, f32)>> {
     filters
 }
 
+/// Periodic Hann window (`a = 2*pi/N`), matching kaldi-native-fbank's "hann" window type
+/// (this is torch/numpy's periodic convention, distinct from a symmetric Hann window).
 fn hann_window(len: usize) -> Vec<f32> {
-    (0..len)
-        .map(|i| 0.5 - 0.5 * (2.0 * PI * i as f32 / (len - 1) as f32).cos())
-        .collect()
+    let a = 2.0 * PI / len as f32;
+    (0..len).map(|i| 0.5 - 0.5 * (a * i as f32).cos()).collect()
 }
 
-/// Reflect-pads `samples` by `pad` on each side, matching `torch.stft(..., pad_mode="reflect")`.
-fn reflect_pad(samples: &[f32], pad: usize) -> Vec<f32> {
-    let n = samples.len();
-    let mut out = Vec::with_capacity(n + 2 * pad);
-    for i in (1..=pad).rev() {
-        out.push(samples[i.min(n.saturating_sub(1))]);
-    }
-    out.extend_from_slice(samples);
-    for i in 0..pad {
-        let idx = n.saturating_sub(2).saturating_sub(i);
-        out.push(samples[idx.min(n.saturating_sub(1))]);
-    }
-    out
-}
-
-/// Extracts 64-dim, per-feature-normalized log-mel features from 16kHz mono audio,
-/// following NeMo's `AudioToMelSpectrogramPreprocessor` defaults.
+/// Extracts 64-dim, per-feature-normalized log-mel features from 16kHz mono audio.
 ///
 /// Returns a `[NUM_MEL_BINS][num_frames]` matrix flattened row-major (channels-first,
 /// matching the `audio_signal` input layout these models expect), along with the frame count.
 pub fn compute_fbank(samples: &[f32]) -> (Vec<f32>, usize) {
-    if samples.is_empty() {
+    if samples.len() < WIN_LENGTH {
         return (Vec::new(), 0);
     }
-
-    // Pre-emphasis over the whole signal (NeMo applies this once, not per-frame).
-    let mut preemphasized = vec![0.0f32; samples.len()];
-    preemphasized[0] = samples[0];
-    for i in 1..samples.len() {
-        preemphasized[i] = samples[i] - PREEMPHASIS_COEFF * samples[i - 1];
-    }
-
-    // Center (reflect-pad) so framing matches torch.stft(center=True).
-    let pad = N_FFT / 2;
-    let padded = reflect_pad(&preemphasized, pad);
-
-    let num_frames = 1 + samples.len() / HOP_LENGTH;
-    if num_frames == 0 {
-        return (Vec::new(), 0);
-    }
+    // Kaldi snip-edges: frames must fit entirely within the waveform.
+    let num_frames = 1 + (samples.len() - WIN_LENGTH) / HOP_LENGTH;
 
     let window = hann_window(WIN_LENGTH);
-    // The Hann window (length WIN_LENGTH) is centered within the N_FFT-sized analysis buffer.
-    let window_offset = (N_FFT - WIN_LENGTH) / 2;
     let mel_filters = build_mel_filterbank(NUM_MEL_BINS);
 
     let mut planner = RealFftPlanner::<f32>::new();
@@ -145,19 +113,19 @@ pub fn compute_fbank(samples: &[f32]) -> (Vec<f32>, usize) {
 
     for frame_idx in 0..num_frames {
         let start = frame_idx * HOP_LENGTH;
+        let frame = &samples[start..start + WIN_LENGTH];
+
+        // Pre-emphasis per frame (frame's own first sample stands in for prior history).
+        let mut processed = vec![0.0f32; WIN_LENGTH];
+        processed[0] = frame[0] - PREEMPHASIS_COEFF * frame[0];
+        for i in 1..WIN_LENGTH {
+            processed[i] = frame[i] - PREEMPHASIS_COEFF * frame[i - 1];
+        }
+
+        // Window, then left-aligned zero-pad up to the FFT size.
         let mut fft_input = fft.make_input_vec();
-        if start + N_FFT <= padded.len() {
-            for i in 0..WIN_LENGTH {
-                fft_input[window_offset + i] = padded[start + window_offset + i] * window[i];
-            }
-        } else {
-            // Last frame may run past the (already center-padded) buffer; zero-pad the tail.
-            for i in 0..WIN_LENGTH {
-                let sample_idx = start + window_offset + i;
-                if sample_idx < padded.len() {
-                    fft_input[window_offset + i] = padded[sample_idx] * window[i];
-                }
-            }
+        for i in 0..WIN_LENGTH {
+            fft_input[i] = processed[i] * window[i];
         }
 
         fft.process_with_scratch(&mut fft_input, &mut spectrum, &mut scratch)
@@ -173,7 +141,7 @@ pub fn compute_fbank(samples: &[f32]) -> (Vec<f32>, usize) {
     }
 
     // Per-feature normalization: for each mel bin, subtract its mean and divide by its
-    // std across time, matching NeMo's normalize="per_feature".
+    // (population) std across time, matching NormalizePerFeature.
     for mel_idx in 0..NUM_MEL_BINS {
         let row = &mut features[mel_idx * num_frames..(mel_idx + 1) * num_frames];
         let mean = row.iter().sum::<f32>() / num_frames as f32;
@@ -216,17 +184,19 @@ mod tests {
     }
 
     #[test]
-    fn empty_audio_yields_no_frames() {
-        let (features, num_frames) = compute_fbank(&[]);
+    fn short_audio_yields_no_frames() {
+        let samples = vec![0.0f32; 10];
+        let (features, num_frames) = compute_fbank(&samples);
         assert_eq!(num_frames, 0);
         assert!(features.is_empty());
     }
 
     #[test]
-    fn frame_count_matches_centered_stft_formula() {
+    fn frame_count_matches_kaldi_snip_edges_formula() {
         let samples = vec![0.1f32; 16000]; // 1s @ 16kHz
         let (_features, num_frames) = compute_fbank(&samples);
-        assert_eq!(num_frames, 1 + samples.len() / HOP_LENGTH);
+        let expected = 1 + (samples.len() - WIN_LENGTH) / HOP_LENGTH;
+        assert_eq!(num_frames, expected);
     }
 
     #[test]
