@@ -137,6 +137,12 @@ pub struct MeetingTranscript {
     pub audio_end_time: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    // Speaker diarization result. speaker_id is looked up against the
+    // speaker profile list (diarization_list_speaker_profiles) on the frontend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_confidence: Option<f64>,
 }
 
 /// Meeting metadata without transcripts (for pagination)
@@ -878,6 +884,8 @@ pub async fn api_get_meeting_transcripts<R: Runtime>(
                     audio_start_time: t.audio_start_time,
                     audio_end_time: t.audio_end_time,
                     duration: t.duration,
+                    speaker_id: t.speaker_id,
+                    speaker_confidence: t.speaker_confidence,
                 })
                 .collect::<Vec<_>>();
 
@@ -928,7 +936,7 @@ pub async fn api_save_meeting_title<R: Runtime>(
 
 #[tauri::command]
 pub async fn api_save_transcript<R: Runtime>(
-    _app: AppHandle<R>,
+    app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
     meeting_title: String,
     transcripts: Vec<serde_json::Value>,
@@ -986,6 +994,11 @@ pub async fn api_save_transcript<R: Runtime>(
                 "Successfully saved transcript and created meeting with id: {}",
                 meeting_id
             );
+
+            // Diarize the recording in the background; this never blocks the save
+            // and failures (no model downloaded, no audio saved, etc.) are logged only.
+            crate::diarization_engine::commands::spawn_diarize_meeting(app.clone(), meeting_id.clone());
+
             Ok(serde_json::json!({
                 "status": "success",
                 "message": "Transcript saved successfully",

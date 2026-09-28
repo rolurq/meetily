@@ -92,6 +92,8 @@ impl MeetingsRepository {
                     audio_start_time: t.audio_start_time,
                     audio_end_time: t.audio_end_time,
                     duration: t.duration,
+                    speaker_id: t.speaker_id,
+                    speaker_confidence: t.speaker_confidence,
                 })
                 .collect::<Vec<_>>();
 
@@ -126,6 +128,20 @@ impl MeetingsRepository {
                 .await?;
 
         Ok(meeting)
+    }
+
+    /// Get every transcript segment for a meeting, ordered by recording position.
+    /// Used by the diarization engine, which needs the full segment list (not a page of it).
+    pub async fn get_all_transcripts(
+        pool: &SqlitePool,
+        meeting_id: &str,
+    ) -> Result<Vec<Transcript>, SqlxError> {
+        sqlx::query_as::<_, Transcript>(
+            "SELECT * FROM transcripts WHERE meeting_id = ? ORDER BY audio_start_time ASC",
+        )
+        .bind(meeting_id)
+        .fetch_all(pool)
+        .await
     }
 
     /// Get meeting transcripts with pagination support

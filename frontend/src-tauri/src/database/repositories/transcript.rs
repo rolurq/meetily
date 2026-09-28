@@ -59,6 +59,8 @@ impl TranscriptsRepository {
             .bind(segment.duration)
             .execute(&mut *transaction)
             .await;
+            // speaker_id/speaker_confidence are populated afterwards by the
+            // diarization engine, once it has processed the finished recording.
 
             if let Err(e) = result {
                 error!(
@@ -118,6 +120,43 @@ impl TranscriptsRepository {
             .collect();
 
         Ok(results)
+    }
+
+    /// Assigns a speaker profile to a transcript segment with a match confidence (0.0-1.0).
+    pub async fn set_segment_speaker(
+        pool: &SqlitePool,
+        transcript_id: &str,
+        speaker_id: &str,
+        confidence: f64,
+    ) -> Result<(), SqlxError> {
+        sqlx::query("UPDATE transcripts SET speaker_id = ?, speaker_confidence = ? WHERE id = ?")
+            .bind(speaker_id)
+            .bind(confidence)
+            .bind(transcript_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Reassigns every segment currently attributed to `from_speaker_id` (within a meeting)
+    /// to `to_speaker_id`. Used when the user corrects a diarization match after the fact.
+    pub async fn reassign_speaker(
+        pool: &SqlitePool,
+        meeting_id: &str,
+        from_speaker_id: &str,
+        to_speaker_id: &str,
+        confidence: f64,
+    ) -> Result<u64, SqlxError> {
+        let result = sqlx::query(
+            "UPDATE transcripts SET speaker_id = ?, speaker_confidence = ? WHERE meeting_id = ? AND speaker_id = ?",
+        )
+        .bind(to_speaker_id)
+        .bind(confidence)
+        .bind(meeting_id)
+        .bind(from_speaker_id)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 
     /// Helper function to extract a snippet of text around the first match of a query.

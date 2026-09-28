@@ -3,6 +3,8 @@ import { PreferenceSettings } from "@/components/PreferenceSettings";
 import { DeviceSelection } from "@/components/DeviceSelection";
 import { LanguageSelection } from "@/components/LanguageSelection";
 import { TranscriptSettings } from "@/components/TranscriptSettings";
+import { DiarizationModelManager } from "@/components/DiarizationModelManager";
+import { SpeakerProfilesSettings } from "@/components/SpeakerProfilesSettings";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { toast } from "sonner";
 import { useConfig } from "@/contexts/ConfigContext";
@@ -149,6 +151,17 @@ export function SettingsModals({
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Speaker Identification Section */}
+            <div className="border-t pt-8">
+              <DiarizationModelManager />
+            </div>
+
+            {/* Saved Speakers Section */}
+            <div className="border-t pt-8">
+              <h4 className="text-lg font-semibold text-gray-900 mb-4">Saved Speakers</h4>
+              <SpeakerProfilesSettings />
             </div>
           </div>
 

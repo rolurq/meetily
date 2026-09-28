@@ -35,6 +35,26 @@ pub struct Transcript {
     pub audio_start_time: Option<f64>,
     pub audio_end_time: Option<f64>,
     pub duration: Option<f64>,
+    // Speaker diarization result for this segment
+    pub speaker_id: Option<String>,
+    pub speaker_confidence: Option<f64>,
+}
+
+/// A saved speaker voiceprint. Every distinct voice diarization detects gets
+/// a profile, including auto-created "Unknown Speaker #N" ones; `is_named`
+/// tracks whether the user has actually assigned it a real name.
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct SpeakerProfile {
+    pub id: String,
+    pub name: String,
+    pub is_named: bool,
+    pub embedding: Vec<u8>,
+    pub embedding_dim: i64,
+    pub embedding_model: String,
+    pub sample_count: i64,
+    pub sample_audio_path: Option<String>,
+    pub created_at: DateTimeUtc,
+    pub updated_at: DateTimeUtc,
 }
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
