@@ -12,7 +12,7 @@ import type { ParakeetDownloadProgressEvent } from '@/lib/parakeet';
 
 const PARAKEET_MODEL = 'parakeet-tdt-0.6b-v3-int8';
 
-type DownloadStatus = 'waiting' | 'downloading' | 'completed' | 'cancelled' | 'error';
+type DownloadStatus = 'waiting' | 'downloading' | 'completed' | 'cancelled' | 'error' | 'skipped';
 
 interface DownloadState {
   status: DownloadStatus;
@@ -28,6 +28,7 @@ export function DownloadProgressStep() {
     goNext,
     selectedSummaryModel,
     recommendedSummaryModel,
+    summaryEnabled,
     parakeetDownloaded,
     setParakeetDownloaded,
     summaryModelDownloaded,
@@ -47,7 +48,7 @@ export function DownloadProgressStep() {
   });
 
   const [summaryState, setSummaryState] = useState<DownloadState>({
-    status: summaryModelDownloaded ? 'completed' : 'waiting',
+    status: !summaryEnabled ? 'skipped' : summaryModelDownloaded ? 'completed' : 'waiting',
     progress: summaryModelDownloaded ? 100 : 0,
     downloadedMb: 0,
     totalMb: 0,
@@ -185,14 +186,16 @@ export function DownloadProgressStep() {
     });
   }, []);
 
-  // Start the selected summary model only after the backend recommendation is known.
+  // Start the selected summary model only after the backend recommendation is known,
+  // and only when the user hasn't opted out of AI summaries.
   useEffect(() => {
+    if (!summaryEnabled) return;
     if (summaryDownloadStartedRef.current) return;
     if (!selectedSummaryModel) return;
     summaryDownloadStartedRef.current = true;
 
     startSummaryDownload();
-  }, [selectedSummaryModel]);
+  }, [selectedSummaryModel, summaryEnabled]);
 
   // Listen to Parakeet download progress
   useEffect(() => {
@@ -366,7 +369,7 @@ export function DownloadProgressStep() {
 
     // Check if downloads are complete for toast notification
     const downloadsComplete = parakeetState.status === 'completed' &&
-      summaryState.status === 'completed';
+      (summaryState.status === 'completed' || summaryState.status === 'skipped');
 
     // Show toast if downloads still in progress
     if (!downloadsComplete) {
@@ -435,8 +438,17 @@ export function DownloadProgressStep() {
           {state.status === 'cancelled' && (
             <span className="text-sm text-gray-500">Cancelled</span>
           )}
+          {state.status === 'skipped' && (
+            <span className="text-sm text-gray-400">Skipped</span>
+          )}
         </div>
       </div>
+
+      {state.status === 'skipped' && (
+        <p className="text-xs text-gray-500 mt-1">
+          Turned off for this setup — enable AI summaries anytime in Settings.
+        </p>
+      )}
 
       {/* Progress Bar */}
       {(state.status === 'downloading' || state.status === 'completed') && (
@@ -516,7 +528,7 @@ export function DownloadProgressStep() {
 
         {/* Info Message - Only show when Parakeet is downloaded */}
         <AnimatePresence>
-          {parakeetDownloaded && !summaryModelDownloaded && (
+          {parakeetDownloaded && summaryEnabled && !summaryModelDownloaded && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}

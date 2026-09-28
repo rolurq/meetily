@@ -128,9 +128,17 @@ export function SummaryModelSettings({ refetchTrigger }: SummaryModelSettingsPro
         <div className="flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">Auto Summary</h3>
-            <p className="text-sm text-gray-600">Auto Generating summary after meeting completion(Stopping)</p>
+            <p className="text-sm text-gray-600">
+              {modelConfig.provider === 'none'
+                ? 'Summaries are turned off below, so this has no effect.'
+                : 'Auto Generating summary after meeting completion(Stopping)'}
+            </p>
           </div>
-          <Switch checked={isAutoSummary} onCheckedChange={toggleIsAutoSummary} />
+          <Switch
+            checked={isAutoSummary}
+            onCheckedChange={toggleIsAutoSummary}
+            disabled={modelConfig.provider === 'none'}
+          />
         </div>
       </div>
 

@@ -171,25 +171,56 @@ pub async fn reset_onboarding_status_cmd<R: Runtime>(
 pub async fn complete_onboarding<R: Runtime>(
     app: AppHandle<R>,
     state: tauri::State<'_, AppState>,
-    model: String,
+    model: Option<String>,
 ) -> Result<(), String> {
-    info!("Completing onboarding with builtin-ai model: {}", model);
-
-    // Step 1: Save model configuration to SQLite database FIRST
     let pool = state.db_manager.pool();
 
-    // Onboarding always uses builtin-ai (local LLM)
-    if let Err(e) = SettingsRepository::save_model_config(
-        pool,
-        "builtin-ai",
-        &model,
-        "large-v3",
-        None,
-    ).await {
-        error!("Failed to save builtin-ai model config: {}", e);
-        return Err(format!("Failed to save builtin-ai model config: {}", e));
+    let mut status = load_onboarding_status(&app)
+        .await
+        .map_err(|e| format!("Failed to load onboarding status: {}", e))?;
+
+    match &model {
+        Some(model) => {
+            info!("Completing onboarding with builtin-ai model: {}", model);
+
+            // Onboarding always uses builtin-ai (local LLM) when summaries are enabled
+            if let Err(e) = SettingsRepository::save_model_config(
+                pool,
+                "builtin-ai",
+                model,
+                "large-v3",
+                None,
+            ).await {
+                error!("Failed to save builtin-ai model config: {}", e);
+                return Err(format!("Failed to save builtin-ai model config: {}", e));
+            }
+            info!("Saved builtin-ai model config: model={}", model);
+
+            status.model_status.summary = "downloaded".to_string();
+            status.model_status.selected_summary_model = Some(model.clone());
+        }
+        None => {
+            info!("Completing onboarding with summaries skipped");
+
+            // The user chose to skip AI summaries during onboarding. Record "none" as the
+            // provider so the rest of the app (meeting view default tab, summary settings)
+            // has an explicit, unambiguous signal that no summarization is configured,
+            // rather than inferring it from an empty/missing provider.
+            if let Err(e) = SettingsRepository::save_model_config(
+                pool,
+                "none",
+                "",
+                "large-v3",
+                None,
+            ).await {
+                error!("Failed to save skipped summary config: {}", e);
+                return Err(format!("Failed to save skipped summary config: {}", e));
+            }
+
+            status.model_status.summary = "skipped".to_string();
+            status.model_status.selected_summary_model = None;
+        }
     }
-    info!("Saved builtin-ai model config: model={}", model);
 
     // Save transcription model config (parakeet provider) - always parakeet
     if let Err(e) = SettingsRepository::save_transcript_config(
@@ -202,22 +233,16 @@ pub async fn complete_onboarding<R: Runtime>(
     }
     info!("Saved transcription model config: provider=parakeet, model={}", crate::config::DEFAULT_PARAKEET_MODEL);
 
-    // Step 2: Only NOW mark onboarding as complete (after DB operations succeed)
-    let mut status = load_onboarding_status(&app)
-        .await
-        .map_err(|e| format!("Failed to load onboarding status: {}", e))?;
-
+    // Only NOW mark onboarding as complete (after DB operations succeed)
     status.completed = true;
     status.current_step = 4; // Max step (4 on macOS with permissions, 3 on other platforms)
     status.model_status.parakeet = "downloaded".to_string();
-    status.model_status.summary = "downloaded".to_string();
-    status.model_status.selected_summary_model = Some(model.clone());
 
     save_onboarding_status(&app, &status)
         .await
         .map_err(|e| format!("Failed to save completed onboarding status: {}", e))?;
 
-    info!("Onboarding completed successfully with model: {}", model);
+    info!("Onboarding completed successfully (summary model: {:?})", model);
     Ok(())
 }
 

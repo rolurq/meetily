@@ -79,6 +79,7 @@ export function SummaryGeneratorButtonGroup({
   }
 
   const isGenerating = summaryStatus === 'processing' || summaryStatus === 'summarizing' || summaryStatus === 'regenerating';
+  const summariesDisabled = modelConfig.provider === 'none';
 
   return (
     <ButtonGroup>
@@ -106,10 +107,12 @@ export function SummaryGeneratorButtonGroup({
             Analytics.trackButtonClick('generate_summary', 'meeting_details');
             void onGenerateSummary(customPrompt);
           }}
-          disabled={isModelConfigLoading}
+          disabled={isModelConfigLoading || summariesDisabled}
           title={
             isModelConfigLoading
               ? 'Loading model configuration...'
+              : summariesDisabled
+              ? 'Summaries are turned off. Enable them in Settings first.'
               : hasSummary ? 'Regenerate AI Summary' : 'Generate AI Summary'
           }
         >

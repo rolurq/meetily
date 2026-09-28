@@ -148,14 +148,15 @@ export default function PageContent({
 
   useEffect(() => {
     if (
-      (meetingData.aiSummary || summaryGeneration.summaryStatus === 'completed')
+      modelConfig.provider !== 'none'
+      && (meetingData.aiSummary || summaryGeneration.summaryStatus === 'completed')
       && !autoSwitchedSummaryMeetingIdsRef.current.has(meeting.id)
       && !manuallySelectedTabMeetingIdsRef.current.has(meeting.id)
     ) {
       autoSwitchedSummaryMeetingIdsRef.current.add(meeting.id);
       setActiveTab('summary');
     }
-  }, [meeting.id, meetingData.aiSummary, summaryGeneration.summaryStatus]);
+  }, [meeting.id, meetingData.aiSummary, summaryGeneration.summaryStatus, modelConfig.provider]);
 
   // Auto-generate only after the model configuration has settled.
   useEffect(() => {
@@ -163,6 +164,7 @@ export default function PageContent({
       !shouldAutoGenerate
       || summaryGeneration.summaryStatus !== 'idle'
       || isModelConfigLoading
+      || modelConfig.provider === 'none'
       || meetingData.transcripts.length === 0
       || autoGenerationStartedMeetingIdRef.current === meeting.id
     ) {

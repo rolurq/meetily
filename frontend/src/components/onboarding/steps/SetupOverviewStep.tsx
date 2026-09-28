@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Info } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { OnboardingContainer } from '../OnboardingContainer';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import {
@@ -11,7 +12,7 @@ import {
 } from "@/components/ui/tooltip";
 
 export function SetupOverviewStep() {
-  const { goNext } = useOnboarding();
+  const { goNext, summaryEnabled, setSummaryEnabled } = useOnboarding();
   const [isMac, setIsMac] = useState(false);
 
   useEffect(() => {
@@ -46,7 +47,7 @@ export function SetupOverviewStep() {
   return (
     <OnboardingContainer
       title="Setup Overview"
-      description="Meetily requires that you download the Transcription & Summarization AI models for the software to work."
+      description="Meetily requires a Transcription model. AI Summaries are optional and can be turned off below."
       step={2}
       totalSteps={isMac ? 4 : 3}
     >
@@ -61,7 +62,7 @@ export function SetupOverviewStep() {
                   className={`flex items-start gap-4 p-1`}
                 >
                   <div className="flex-1 ml-1">
-                    <h3 className="font-medium text-gray-900 flex items-center gap-2">
+                    <h3 className={`font-medium flex items-center gap-2 ${step.type === 'summarization' && !summaryEnabled ? 'text-gray-400' : 'text-gray-900'}`}>
                         Step {step.number} :  {step.title}
 
                         {step.type === "summarization" && (
@@ -80,6 +81,22 @@ export function SetupOverviewStep() {
                             </TooltipProvider>
                         )}
                         </h3>
+                    {step.type === "summarization" && (
+                      <div className="flex items-center justify-between mt-2 pl-0">
+                        <p className="text-xs text-gray-500 pr-3">
+                          {summaryEnabled
+                            ? 'Downloads a local AI model for meeting summaries.'
+                            : "Skipped — you can turn summaries on anytime in Settings."}
+                        </p>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Switch
+                            checked={summaryEnabled}
+                            onCheckedChange={setSummaryEnabled}
+                            aria-label="Enable AI summaries"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               );

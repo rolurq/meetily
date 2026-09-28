@@ -13,6 +13,7 @@ import {
 interface EmptyStateSummaryProps {
   onGenerate: () => void;
   hasModel: boolean;
+  summariesDisabled?: boolean;
   isGenerating?: boolean;
   error?: string | null;
 }
@@ -20,9 +21,13 @@ interface EmptyStateSummaryProps {
 export function EmptyStateSummary({
   onGenerate,
   hasModel,
+  summariesDisabled = false,
   isGenerating = false,
   error = null,
 }: EmptyStateSummaryProps) {
+  const disabledHint = summariesDisabled
+    ? 'Summaries are turned off. Enable them in Settings first.'
+    : 'Please select a model in Settings first';
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.95 }}
@@ -60,7 +65,7 @@ export function EmptyStateSummary({
           </TooltipTrigger>
           {!hasModel && (
             <TooltipContent>
-              <p>Please select a model in Settings first</p>
+              <p>{disabledHint}</p>
             </TooltipContent>
           )}
         </Tooltip>
@@ -68,7 +73,7 @@ export function EmptyStateSummary({
 
       {!hasModel && (
         <p className="text-xs text-amber-600 mt-3">
-          Please select a model in Settings first
+          {disabledHint}
         </p>
       )}
     </motion.div>

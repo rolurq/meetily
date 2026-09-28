@@ -105,6 +105,7 @@ export function SettingsModals({
                         });
                       }}
                     >
+                      <option value="none">Off (don't generate summaries)</option>
                       <option value="builtin-ai">Built-in AI</option>
                       <option value="claude">Claude</option>
                       <option value="groq">Groq</option>
@@ -113,18 +114,25 @@ export function SettingsModals({
                       <option value="openai">OpenAI</option>
                     </select>
 
-                    <select
-                      className="flex-1 px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                      value={modelConfig.model}
-                      onChange={(e) => setModelConfig((prev: ModelConfig) => ({ ...prev, model: e.target.value }))}
-                    >
-                      {modelOptions[modelConfig.provider].map((model: string) => (
-                        <option key={model} value={model}>
-                          {model}
-                        </option>
-                      ))}
-                    </select>
+                    {modelConfig.provider !== 'none' && (
+                      <select
+                        className="flex-1 px-3 py-2 text-sm bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                        value={modelConfig.model}
+                        onChange={(e) => setModelConfig((prev: ModelConfig) => ({ ...prev, model: e.target.value }))}
+                      >
+                        {modelOptions[modelConfig.provider].map((model: string) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
+                  {modelConfig.provider === 'none' && (
+                    <p className="text-xs text-gray-500 mt-2">
+                      Meetings won't get an AI summary. Transcripts are still recorded and saved.
+                    </p>
+                  )}
                 </div>
                 {modelConfig.provider === 'ollama' && (
                   <div>

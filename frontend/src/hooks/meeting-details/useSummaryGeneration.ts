@@ -461,6 +461,12 @@ export function useSummaryGeneration({
       toast.info('Loading model configuration, please wait...');
       return;
     }
+    if (modelConfig.provider === 'none') {
+      showPreflightError('Summaries are turned off. Enable a provider in Settings to generate one.');
+      onOpenModelSettings?.();
+      return;
+    }
+
     const allTranscripts = await fetchAllTranscripts(meeting.id);
     if (!allTranscripts.length) {
       showPreflightError('No transcripts available for summary');

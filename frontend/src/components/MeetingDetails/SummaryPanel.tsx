@@ -289,7 +289,8 @@ export function SummaryPanel({
       ) : !hasSummary ? (
         <EmptyStateSummary
           onGenerate={() => onGenerateSummary(customPrompt)}
-          hasModel={modelConfig.provider !== null && modelConfig.model !== null}
+          hasModel={modelConfig.provider !== 'none' && modelConfig.provider !== null && modelConfig.model !== null}
+          summariesDisabled={modelConfig.provider === 'none'}
           isGenerating={isSummaryLoading}
           error={summaryError}
         />

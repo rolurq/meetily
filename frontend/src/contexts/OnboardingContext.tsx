@@ -45,6 +45,7 @@ interface OnboardingContextType {
   summaryModelProgressInfo: SummaryModelProgressInfo;
   selectedSummaryModel: string;
   recommendedSummaryModel: string;
+  summaryEnabled: boolean;
   databaseExists: boolean;
   isBackgroundDownloading: boolean;
   // Permissions
@@ -58,6 +59,7 @@ interface OnboardingContextType {
   setParakeetDownloaded: (value: boolean) => void;
   setSummaryModelDownloaded: (value: boolean) => void;
   setSelectedSummaryModel: (value: string) => void;
+  setSummaryEnabled: (value: boolean) => void;
   setDatabaseExists: (value: boolean) => void;
   setPermissionStatus: (permission: keyof OnboardingPermissions, status: PermissionStatus) => void;
   setPermissionsSkipped: (skipped: boolean) => void;
@@ -95,6 +97,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   });
   const [selectedSummaryModel, setSelectedSummaryModel] = useState<string>('');
   const [recommendedSummaryModel, setRecommendedSummaryModel] = useState<string>('');
+  const [summaryEnabled, setSummaryEnabled] = useState<boolean>(true);
   const [databaseExists, setDatabaseExists] = useState(false);
   const [isBackgroundDownloading, setIsBackgroundDownloading] = useState(false);
 
@@ -479,6 +482,15 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         saveTimeoutRef.current = undefined;
       }
 
+      if (!summaryEnabled) {
+        // User chose to skip AI summaries - don't download/select a summary model at all.
+        await invoke('complete_onboarding', { model: null });
+        setCompleted(true);
+        console.log('[OnboardingContext] Onboarding completed with summaries skipped');
+        isCompletingRef.current = false;
+        return;
+      }
+
       let modelToSave = selectedSummaryModel;
       if (!modelToSave) {
         modelToSave = await invoke<string>('builtin_ai_get_recommended_model');
@@ -620,6 +632,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         summaryModelProgressInfo,
         selectedSummaryModel,
         recommendedSummaryModel,
+        summaryEnabled,
         databaseExists,
         isBackgroundDownloading,
         permissions,
@@ -630,6 +643,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
         setParakeetDownloaded,
         setSummaryModelDownloaded,
         setSelectedSummaryModel,
+        setSummaryEnabled,
         setDatabaseExists,
         setPermissionStatus,
         setPermissionsSkipped,

@@ -76,6 +76,7 @@ interface ConfigContextType {
   // Summary configuration
   isAutoSummary: boolean;
   toggleIsAutoSummary: (checked: boolean) => void;
+  isSummaryEnabled: boolean;
 
   // Provider-specific API keys
   providerApiKeys: {
@@ -375,7 +376,13 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     openai: ['gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo'],
     'builtin-ai': [],
     'custom-openai': [],
+    none: [],
   };
+
+  // Whether a summarization provider is actually configured. The 'none' provider is an
+  // explicit "summaries are off" choice (set from onboarding or Settings), distinct from
+  // still-loading state.
+  const isSummaryEnabled = modelConfig.provider !== 'none';
 
   // Toggle confidence indicator with localStorage persistence
   const toggleConfidenceIndicator = useCallback((checked: boolean) => {
@@ -493,6 +500,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     isModelConfigLoading,
     isAutoSummary,
     toggleIsAutoSummary,
+    isSummaryEnabled,
     providerApiKeys,
     updateProviderApiKey,
     transcriptModelConfig,
@@ -518,6 +526,7 @@ export function ConfigProvider({ children }: { children: ReactNode }) {
     isModelConfigLoading,
     isAutoSummary,
     toggleIsAutoSummary,
+    isSummaryEnabled,
     providerApiKeys,
     updateProviderApiKey,
     transcriptModelConfig,

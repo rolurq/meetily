@@ -85,6 +85,13 @@ function MeetingDetailsContent() {
       // Check what's currently in database
       const currentConfig = await invoke('api_get_model_config') as any;
 
+      // User explicitly turned summaries off - never auto-generate or guess a fallback model.
+      if (currentConfig && currentConfig.provider === 'none') {
+        console.log('Summaries are turned off, skipping auto-generation');
+        setHasCheckedAutoGen(true);
+        return;
+      }
+
       // If DB already has a model, use it (never override!)
       if (currentConfig && currentConfig.model) {
         console.log('Using existing model from DB:', currentConfig.model);
