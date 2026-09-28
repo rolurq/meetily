@@ -1,12 +1,14 @@
 //! ONNX speaker-embedding model wrapper.
 //!
-//! Loads a single-input/single-output ONNX speaker-embedding network (WeSpeaker
-//! or NeMo style, as distributed for `sherpa-onnx`) and turns 16kHz mono audio
-//! into a fixed-length voiceprint vector. The input/output tensor names are
-//! read from the model itself rather than hardcoded, since different releases
-//! use different node names but are otherwise single-input/single-output.
+//! Loads a single-input/single-output NeMo-style ONNX speaker-embedding network
+//! (TitaNet / SpeakerNet) and turns 16kHz mono audio into a fixed-length
+//! voiceprint vector. The single input, named `audio_signal` on the bundled
+//! models, expects channels-first log-mel features of shape `[1, 64, time]`
+//! (see `fbank.rs`). The input/output tensor names are still read from the
+//! model itself rather than hardcoded, since different releases may use
+//! different node names.
 
-use super::fbank::compute_fbank;
+use super::fbank::{compute_fbank, NUM_MEL_BINS};
 use ndarray::Array3;
 use ort::execution_providers::CPUExecutionProvider;
 use ort::inputs;
@@ -54,6 +56,17 @@ impl SpeakerEmbeddingModel {
             .map(|o| o.name.clone())
             .ok_or_else(|| DiarizationModelError::OutputNotFound("model has no outputs".into()))?;
 
+        if session.inputs.len() > 1 {
+            let extra: Vec<&str> = session.inputs[1..].iter().map(|i| i.name.as_str()).collect();
+            log::warn!(
+                "Speaker embedding model has {} inputs beyond '{}' ({:?}) that this loader does not supply; \
+                 inference may fail if the model requires them",
+                extra.len(),
+                input_name,
+                extra
+            );
+        }
+
         log::info!(
             "Loaded speaker embedding model from {}: input='{}', output='{}'",
             model_path.as_ref().display(),
@@ -75,8 +88,9 @@ impl SpeakerEmbeddingModel {
             return Err(DiarizationModelError::SegmentTooShort);
         }
 
-        let input = Array3::from_shape_vec((1, num_frames, features.len() / num_frames), features)
-            .expect("fbank feature buffer matches (num_frames, num_mel_bins) shape");
+        // Channels-first: [batch=1, mel_bins=64, time=num_frames], matching `audio_signal`.
+        let input = Array3::from_shape_vec((1, NUM_MEL_BINS, num_frames), features)
+            .expect("fbank feature buffer matches (NUM_MEL_BINS, num_frames) shape");
 
         let outputs = self.session.run(inputs![
             self.input_name.as_str() => TensorRef::from_array_view(input.view())?,
